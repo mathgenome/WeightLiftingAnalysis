@@ -1,0 +1,149 @@
+---
+title: "Weight lifting performance"
+author: "Humberto Reyes"
+date: "April 24, 2015"
+output: html_document
+---
+In this project, the goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal is to predict the manner in which they did the exercise, as classified in the response variable "classe".
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.
+
+### Getting data
+
+```{r}
+setwd("~/courses/autocursos/RCoursera/MachineLearning/project")
+#Training data
+htp<-"http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+##download.file(htp,"raw/training.csv",method="curl")
+##Testing data
+htp<-"http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+##download.file(htp,"raw/testing.csv",method="curl")
+training.raw<-read.csv("raw/training.csv",head=TRUE)
+testing<-read.csv("raw/testing.csv",head=TRUE)
+```
+
+### Cleaning data
+
+Since there are columns plenty of NAs, I select a training dataframe with no NAs.
+
+```{r}
+#Function to count NAs
+countNA<-function(x)sum(is.na(x))
+#Training set without columns with NAs
+training<-training.raw[,unlist(lapply(training.raw,countNA))==0]
+#Select a clean training data set with numerical columns, to pick up variables measured by devices
+training<-training[,!unlist(lapply(training,is.factor))]
+names(training)
+```
+
+<p>The first four columns should be eliminated. X appears to be an index, whereas raw_timestamp_part_1, raw_timestamp_part_2 and num_window do not appear to be mesurements made by devices</p>
+
+```{r}
+#Remove columns
+training<-training[,-c(1:4)]
+#Add the classe variable
+training<-cbind(training,classe=training.raw$classe)
+#Remove raw training data
+rm(training.raw)
+#Number of columns of the training data set
+length(names(training))
+```
+
+We have `r length(names(training))-1` numerical features and one categorical response: "classe"
+
+#### Frequencies of classes
+
+```{r}
+pie(table(training$classe))
+```
+
+The frequency of A is slightly higher than those of the remaining classes
+
+Classes represent five different fashions to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl:
+
+Exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+### Feature selection
+
+#### Generation of a random set of 1000 records, to pick the most important variables for Random Forest, according to their importance maesured as the mean decrease in the Gini index.
+
+```{r}
+set.seed(123)
+#Random subset of 1000 records
+inTrain<-sample(dim(training)[1],1000)
+#Using the randomForest package
+library(randomForest)
+#Generatic a random forest object
+my.rf1000<-randomForest(classe~.,data=training[inTrain,])
+my.rf1000
+#Importance of variables
+importance(my.rf1000)
+#Plot of importances
+varImpPlot(my.rf1000)
+```
+
+Near the value of 17, there is a trend of faster increase in importance.
+
+#### Chosing features with importance greater than 17
+
+```{r}
+#Training data with selected features
+redTrain<-training[,importance(my.rf1000)[,1]>17]
+names(redTrain)
+```
+
+<p>The reduced data frame contains 16 features plus classe. The most important features are roll_belt and pitch_belt</p>
+
+```{r}
+library(ggplot2)
+qplot(roll_belt,pitch_belt,data=redTrain,colour=classe)
+```
+
+However, as we can see, they cannot unambiguously classify by themeselves "classe"
+
+### Random Forest with all records for selected features
+
+```{r}
+set.seed(123)
+my.rfAll<-randomForest(classe~.,data=redTrain)
+my.rfAll
+#Plot of errors accross the number of trees
+plot(my.rfAll)
+```
+
+The Out of Bag Error is 0.56%, which gives an accuracy of 99.44%
+
+### Cross validation by 5-fold
+
+This cross validations, besides indicating the out of sample error with the selected 16 features, indicates how error changes by eliminating predictors.
+
+```{r}
+set.seed(123)
+obj<-rfcv(redTrain[,-c(17)],redTrain[,c(17)]) #cross-validation in randomForest package
+#Numbers of features
+obj$n.var
+#Cross-validation error
+obj$error.cv
+#Graphical representation of cross-validation errors against number of features
+with(obj, plot(n.var, error.cv))
+```
+
+The cross-validation error = `r obj$error.cv[1]` is not far from the Out of Bag Error calculated by randomForest of 0.56%, i.e., 0.0056. The accuracy according to cross-validation is `r round(100*(1-obj$error.cv[1]),2)`%.
+
+### Prediction for the test set
+
+```{r}
+predict(my.rfAll,testing)
+```
+
+The probability of correctly predicting the 20 cases is:
+
+```{r}
+dbinom(20,20,(1-obj$error.cv[1]))
+```
+
+... and it did : )
+
+
+
+
